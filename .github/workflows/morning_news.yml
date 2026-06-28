@@ -2,12 +2,22 @@ name: Morning News Bot
 
 on:
   schedule:
+    # ⚠️ 日本時間 朝7時00分（UTC 22時00分）に自動起動
     - cron: '0 22 * * *'
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  run-bot-parallel:
     runs-on: ubuntu-latest
+    strategy:
+      # 4つのジャンルを定義。GitHubのサーバーが4台同時に立ち上がり、並列で処理します
+      matrix:
+        category: [
+          "AI動向・Tips",
+          "コンサルティング業界",
+          "ビジネス・経営情報",
+          "生産性向上・仕事術"
+        ]
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -21,9 +31,10 @@ jobs:
       run: |
         pip install google-generativeai requests feedparser python-dotenv
 
-    - name: Run script
+    - name: Run script for ${{ matrix.category }}
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-      run: python main.py
+      # 各サーバーがそれぞれの担当カテゴリ名を引数に渡して main.py を実行します
+      run: python main.py "${{ matrix.category }}"
