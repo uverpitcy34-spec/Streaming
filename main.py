@@ -1,98 +1,95 @@
 import os
-import sys
-import urllib.parse
 import feedparser
 import requests
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+# .envファイルから環境変数を読み込む
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_USER_ID = os.getenv("LINE_USER_ID")
 
-# ==========================================
-# 4つの新しいカテゴリと検索クエリの定義
-# ==========================================
-CATEGORIES = {
-    "AI動向・Tips": {
-        "query": "AI トレンド OR LLM 開発 OR プロンプト 活用",
-        "title": "🤖【最新AI動向 ＆ 実務Tips】"
-    },
-    "コンサルティング業界": {
-        "query": "コンサルティングファーム OR マッキンゼー OR アクセンチュア OR コンサル キャリア",
-        "title": "💼【コンサルティング業界 ニュース】"
-    },
-    "ビジネス・経営情報": {
-        "query": "経済トレンド OR 経営戦略 OR ビジネス ニュース",
-        "title": "📈【一般的なビジネス・経営情報】"
-    },
-    "生産性向上・仕事術": {
-        "query": "業務効率化 OR 生産性向上 OR 時短 ワークフロー",
-        "title": "⏱️【生産性向上・時短仕事術】"
-    }
-}
+# 【精査＆網羅版】Claudeと共同作成した最強の全20フィード
+RSS_URLS = [
+    # ── 1. AI最新動向（国内）──
+    "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",       # ITmedia AI++
+    "https://www.publickey1.jp/atom.xml",                  # Publickey
+    "https://ascii.jp/rss/rss_ai.xml",                     # ASCII.jp AI
 
-def fetch_google_news(category_key):
-    cat_data = CATEGORIES.get(category_key)
-    if not cat_data:
-        return []
-        
-    query = f"{cat_data['query']} when:1d"
-    encoded_query = urllib.parse.quote(query)
-    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ja&gl=JP&ceid=JP:ja"
-    
-    feed = feedparser.parse(rss_url)
+    # ── 2. AI最新動向（海外・英語）──
+    "https://techcrunch.com/category/artificial-intelligence/feed/",  # TechCrunch AI
+    "https://venturebeat.com/category/ai/feed/",           # VentureBeat AI
+    "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", # The Verge AI
+
+    # ── 3. AI実務Tips・Pythonコーディング ──
+    "https://qiita.com/tags/ai/feed",                      # Qiita AI
+    "https://qiita.com/tags/langchain/feed",               # Qiita LangChain
+    "https://qiita.com/tags/python/feed",                  # Qiita Python
+    "https://zenn.dev/topics/llm/feed",                    # Zenn LLM
+    "https://zenn.dev/topics/ai/feed",                     # Zenn AI
+    "https://zenn.dev/topics/python/feed",                  # Zenn Python
+
+    # ── 4. 企業DX・IT導入事例 ──
+    "https://enterprisezine.jp/rss/new/",                  # EnterpriseZine
+    "https://japan.zdnet.com/rss/",                        # ZDNET Japan
+    "https://xtech.nikkei.com/rss/index.rdf",              # 日経XTECH
+    "https://rss.itmedia.co.jp/rss/2.0/business.xml",      # ITmedia ビジネス
+
+    # ── 5. 経営戦略・コンサル ──
+    "https://www.dhbr.net/rss",                            # Harvard Business Review日本版
+    "https://toyokeizai.net/list/feed/rss",                # 東洋経済オンライン
+    "https://diamond.jp/rss/articles",                     # ダイヤモンドオンライン
+    "https://business.nikkei.com/rss/bn/nb.rdf",           # 日経ビジネス
+]
+
+def fetch_latest_articles():
     articles = []
-    seen_domains = set()
-    
-    for entry in feed.entries:
-        domain = entry.link.split("/")[2] if len(entry.link.split("/")) > 2 else ""
-        
-        # 1つのソースに偏らないよう、同じサイトからは最大3本まで
-        if list(seen_domains).count(domain) >= 3:
+    for url in RSS_URLS:
+        try:
+            feed = feedparser.parse(url)
+            # 20フィードあるため、各ソースから最新3本ずつを厳選（総数最大60本程度）
+            for entry in feed.entries[:3]:
+                articles.append({
+                    "title": entry.title,
+                    "link": entry.link,
+                    "summary": entry.get("summary", "")[:250]
+                })
+        except Exception as e:
+            print(f"Warning: Failed to parse {url}. Error: {e}")
             continue
-            
-        articles.append({
-            "title": entry.title,
-            "link": entry.link,
-            "pubDate": entry.get("published", "")
-        })
-        seen_domains.add(domain)
-        
-        # 1ジャンル10本を確実に生成するため、元ネタは多めに「15本」確保
-        if len(articles) >= 15:
-            break
-            
     return articles
 
-def generate_summary(category_key, articles):
+def generate_summary(articles):
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY が設定されていません。")
         
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel("gemini-2.5-flash")
     
-    cat_title = CATEGORIES[category_key]["title"]
-    
     prompt = f"""
-    あなたはプロのビジネスコンサルタント兼リサーチャーです。
-    以下の【提供された最新記事データ】のみを基に、日本の読者向けに毎朝のニュース配信テキストを作成してください。
+    あなたはプロフェッショナルなコンサルタントの右腕となる、極めて優秀なシニアリサーチャーです。
+    提供された【記事データ】のみを100%の正確な情報源として扱い、日本の読者向けに毎朝のニュース要約を作成してください。
 
     【絶対厳守ルール】
-    1. 提供されていない情報を付け加えてニュースを創作（ハルシネーション）することは厳禁です。
-    2. 各記事のURL（link）は、提供されたものを1文字も変えずにそのまま出力してください。
-    3. 送られてきたデータの中から、実務へのインパクトが大きいものを【必ずちょうど10本】厳選してください。元データが足りない場合のみ、ある分だけで出力してください。
+    1. 提供されたデータにないニュース、存在しないURLは1文字たりとも創作してはいけません（ハルシネーションの徹底排除）。
+    2. 各記事のURL（link）は、データにあるものをそのまま完全に出力してください。ダミーURLへの置換は厳禁です。
+    3. 【翻訳の義務】海外ソース（英語のタイトルや本文）が含まれている場合は、必ず高度なビジネス日本語に翻訳した上で要約を行ってください。
+
+    【重要視するジャンル仕分け・選定の基準】
+    ・AI動向：国内外（TechCrunch/VentureBeat等含む）の先端LLM・プロダクトの動向
+    ・AI実務Tips：PythonやLangChain等を用いた、具体的なAI実装・自動化・コーディングの手法
+    ・企業DX・生産性向上：「個人のタスク管理術」などは除外し、「企業や組織」がテクノロジーを導入してどのように業務プロセス（BPR）を刷新し、生産性を向上させたかの具体的事例を最優先にしてください。
+    ・経営戦略：マクロな経済動向、経営戦略、組織論のインサイト
 
     【出力フォーマット】
-    {cat_title}
+    ■ [記事のタイトル（英語の場合は日本語訳）]
+      - 3行程度の具体的かつ実務にどう役立つかを含めた文章要約
+      🔗 [リンク先URL]
 
-    ● [記事タイトル（無駄なサイト名などは削り、綺麗に整形）]
-      - 3行程度で、なぜ今これを読むべきか、実務やキャリアにどう活きるかの要約
-      🔗 [提供されたURLをそのまま記載]
-      
-    (※これを10本分、綺麗に並べて出力してください。各記事の間には空行を挟んで読みやすくしてください。)
+    【提供された記事データ】
+    {articles}
     """
     
     response = model.generate_content(prompt)
@@ -112,24 +109,22 @@ def send_to_line(text):
         "messages": [{"type": "text", "text": text}]
     }
     response = requests.post(url, headers=headers, json=payload)
-    if response.status_code != 200:
-        print(f"LINEエラー: {response.text}")
+    if response.status_code == 200:
+        print("LINEへの配信に成功しました！")
+    else:
+        print(f"エラーが発生しました: {response.text}")
 
 if __name__ == "__main__":
-    # 引数から実行したいカテゴリ名を受け取る (例: python main.py "AI動向・Tips")
-    if len(sys.argv) < 2:
-        print("エラー: カテゴリを引数に指定してください。")
-        sys.exit(1)
-        
-    target_category = sys.argv[1]
-    if target_category not in CATEGORIES:
-        print(f"エラー: 未定義のカテゴリです -> {target_category}")
-        sys.exit(1)
-        
-    print(f"【{target_category}】の処理を開始します...")
-    raw_articles = fetch_google_news(target_category)
-    summary_text = generate_summary(target_category, raw_articles)
+    print("精査された20個のRSSソースから網羅的に記事を取得中...")
+    raw_articles = fetch_latest_articles()
     
-    # LINEの5000文字制限に収めて送信
+    if not raw_articles:
+        send_to_line("📢 本日の最新ニュース・Tipsの更新はありませんでした。")
+        exit()
+        
+    print(f"計 {len(raw_articles)} 本の記事をプール。Geminiで翻訳・仕分け・3行要約を生成中...")
+    summary_text = generate_summary(raw_articles)
+    
+    print("スマホのLINEへ送信中...")
+    # LINEの1メッセージの文字数制限（5000文字）に収まるよう安全にカット
     send_to_line(summary_text[:4900])
-    print(f"【{target_category}】のLINE配信が完了しました。")
