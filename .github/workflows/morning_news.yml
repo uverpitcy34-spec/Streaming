@@ -2,10 +2,12 @@ name: Morning News Bot
 
 on:
   schedule:
+    # 毎日 協定世界時(UTC) 22:00 に実行 ＝ 日本時間(JST)で【毎朝 AM 7:00】
     - cron: '0 22 * * *'
+  # GitHubの画面からいつでも手動で実行（テスト）できるようにする設定
   workflow_dispatch:
 
-# 💡 追加: GitHub Pagesへのデプロイに必要な権限を明示
+# GitHub Pagesの自動デプロイに必要なアクセス権限を明示
 permissions:
   contents: write
   pages: write
@@ -14,6 +16,7 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    # 大容量の要約処理が途中で強制終了されないよう、30分の実行猶予を明示的に設定
     timeout-minutes: 30
     
     steps:
@@ -27,20 +30,23 @@ jobs:
 
     - name: Install dependencies
       run: |
+        # 必要なライブラリに加え、環境変数管理のための python-dotenv もインストール
         pip install google-generativeai requests feedparser python-dotenv
 
     - name: Run script
+      # GitHub Secretsに登録した3つの鍵に加え、標準のレポジトリ名環境変数を引き渡します
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
         LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
       run: python main.py
 
-    # 💡 追加: 生成された index.html を自動的に GitHub Pages にアップロード・公開する
+    # 生成された index.html を自動的に GitHub Pages 向けにパッケージ・公開する
     - name: Upload artifact for Pages
       uses: actions/upload-pages-artifact@v3
       with:
-        path: '.' # リポジトリのルートにある index.html を対象にする
+        path: '.' # リポジトリのルートにある index.html をアップロード対象にする
 
     - name: Deploy to GitHub Pages
       uses: actions/deploy-pages@v4
