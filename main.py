@@ -70,9 +70,9 @@ def fetch_all_genres():
     structured_data = ""
     seen_links = set()
     
-    # 直近72時間（3日間）の記事をプール
+    # 💡 【緩和】直近120時間（5日間）の記事をプールして土日や更新薄をカバー
     now = datetime.now()
-    time_threshold = now - timedelta(hours=72)
+    time_threshold = now - timedelta(hours=120)
 
     for genre_name, urls in GENRE_CHANNELS.items():
         structured_data += f"\n\n【{genre_name}】\n"
@@ -89,16 +89,22 @@ def fetch_all_genres():
                     if not link or link in seen_links:
                         continue
                     
-                    # 日付チェック
+                    # 💡 【緩和】日付判定の失敗による記事全除外バグを防ぐ
                     published_tok = entry.get("published_parsed") or entry.get("updated_parsed")
                     if published_tok:
-                        published_dt = datetime(*published_tok[:6])
-                        if published_dt < time_threshold:
-                            continue
+                        try:
+                            published_dt = datetime(*published_tok[:6])
+                            if published_dt < time_threshold:
+                                continue
+                        except Exception:
+                            # 日付のパースに失敗した場合は、除外せず最新記事として救済
+                            pass
                     
                     seen_links.add(link)
                     title = entry.title.strip() if entry.title else "無題"
                     summary = entry.get("summary", "")[:250].strip()
+                    # 改行や不適切な空白の掃除
+                    summary = re.sub(r'\s+', ' ', summary)
                     
                     structured_data += f"- タイトル: {title}\n  URL: {link}\n  概要: {summary}\n"
                     genre_articles_count += 1
@@ -134,18 +140,45 @@ def generate_summary(structured_articles_text):
        ここがいけぽん様の最重要メインジャンルです。日経ビジネスや東洋経済等から、企業の広範な情報を網羅するため、データがある限り妥協せず【20本目安】の大ボリュームで手厚く出力してください。
 
     【出力形式の指定】
-    必ず指定 of 6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
-    余計な説明文や、マークダウン形式の装飾は一切不要です。純粋なJSONテキストのみを返してください。
-    各記事オブジェクトは "title", "url", "summary" の3つのキーを持つようにしてください。"summary" は3行程度の要約文の配列（文字列のリスト）とします。
+    指定された6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
+    各記事オブジェクトは "title", "url", "summary" の3つのキーを持つ必要があります。"summary" は3行程度の要約文の配列（文字列のリスト）としてください。
 
     【提供されたジャンル別・記事データ】
     {structured_articles_text}
     """
     
+    # 💡 【安定化の核】ライブラリのバージョンを問わず完全にJSON構造をロックするスキーマ定義
+    article_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "title": {"type": "STRING"},
+            "url": {"type": "STRING"},
+            "summary": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"}
+            }
+        },
+        "required": ["title", "url", "summary"]
+    }
+    
+    response_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "ai-domestic": {"type": "ARRAY", "items": article_schema},
+            "ai-overseas": {"type": "ARRAY", "items": article_schema},
+            "ai-tips": {"type": "ARRAY", "items": article_schema},
+            "dx-case": {"type": "ARRAY", "items": article_schema},
+            "business": {"type": "ARRAY", "items": article_schema},
+            "consulting": {"type": "ARRAY", "items": article_schema}
+        },
+        "required": ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]
+    }
+    
     response = model.generate_content(
         prompt, 
         generation_config={
-            "response_mime_type": "application/json"
+            "response_mime_type": "application/json",
+            "response_schema": response_schema  # スキーマを強制適用
         }
     )
     return response.text
@@ -169,13 +202,30 @@ def create_html_site(json_text):
             data = json.loads(json_text_clean)
         except Exception as e_inner:
             print(f"🚨 クレンジング後もJSONの復旧に失敗しました。空データでサイトを枠だけ生成します: {e_inner}")
-            data = {k: [] for k in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]}
+            data = {}
+        
+    # 💡 【揺らぎ吸収】Geminiがキー名をハイフンではなくアンダースコア等で返しても確実にマッピングを揃える
+    normalized_data = {}
+    for standard_key in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]:
+        possible_keys = [
+            standard_key,
+            standard_key.replace("-", "_"),
+            standard_key.replace("_", "-"),
+            standard_key.lower(),
+            standard_key.upper()
+        ]
+        articles = []
+        for pk in possible_keys:
+            if pk in data and isinstance(data[pk], list) and len(data[pk]) > 0:
+                articles = data[pk]
+                break
+        normalized_data[standard_key] = articles
         
     today_str = datetime.now().strftime("%Y年%m%d日")
     
     genre_html_dict = {}
     for genre_key in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]:
-        articles = data.get(genre_key, [])
+        articles = normalized_data.get(genre_key, [])
         cards_html = ""
         
         if not articles:
@@ -323,12 +373,9 @@ def send_to_line():
         github_user = parts[0].lower()
         repo_name = parts[1]
         
-        # 💡 【404対策】リポジトリ名がユーザーサイト用の特別なリポジトリ（ユーザー名.github.io）の場合の判定を追加
-        # この場合、PagesのURLにサブディレクトリはつきません。
         if repo_name.lower() == f"{github_user}.github.io":
             site_url = f"https://{github_user}.github.io/"
         else:
-            # 通常のリポジトリの場合、リポジトリ名の大文字・小文字を完全に維持してサブフォルダを設定
             site_url = f"https://{github_user}.github.io/{repo_name}/"
     else:
         site_url = "https://github.com"
