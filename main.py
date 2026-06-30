@@ -1,9 +1,9 @@
 import os
 import json
+import re
 import feedparser
 import requests
 import google.generativeai as genai
-from google.generativeai import types  # スキーマ定義用にインポート
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -59,6 +59,7 @@ def clean_url(url_string):
     try:
         parsed = urlparse(url_string.strip())
         kv_pairs = parse_qsl(parsed.query)
+        # 不要なマーケティング用パラメータ(utm_*)を排除
         cleaned_kv = [(k, v) for k, v in kv_pairs if not k.startswith("utm_")]
         new_query = urlencode(cleaned_kv)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
@@ -69,6 +70,7 @@ def fetch_all_genres():
     structured_data = ""
     seen_links = set()
     
+    # 直近72時間（3日間）の記事をプール
     now = datetime.now()
     time_threshold = now - timedelta(hours=72)
 
@@ -79,6 +81,7 @@ def fetch_all_genres():
         for url in urls:
             try:
                 feed = feedparser.parse(url)
+                # 「5. 経営・ビジネス情報」は大量にプールするため、1メディアあたり15本まで取得
                 max_fetch = 15 if "5." in genre_name else 5
                 
                 for entry in feed.entries[:max_fetch]:
@@ -86,6 +89,7 @@ def fetch_all_genres():
                     if not link or link in seen_links:
                         continue
                     
+                    # 日付チェック
                     published_tok = entry.get("published_parsed") or entry.get("updated_parsed")
                     if published_tok:
                         published_dt = datetime(*published_tok[:6])
@@ -129,55 +133,44 @@ def generate_summary(structured_articles_text):
     ・「business」ジャンル：
        ここがいけぽん様の最重要メインジャンルです。日経ビジネスや東洋経済等から、企業の広範な情報を網羅するため、データがある限り妥協せず【20本目安】の大ボリュームで手厚く出力してください。
 
+    【出力形式の指定】
+    必ず指定の6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
+    余計な説明文や、マークダウン形式の装飾は一切不要です。純粋なJSONテキストのみを返してください。
+    各記事オブジェクトは "title", "url", "summary" の3つのキーを持つようにしてください。"summary" は3行程度の要約文の配列（文字列のリスト）とします。
+
     【提供されたジャンル別・記事データ】
     {structured_articles_text}
     """
     
-    # 💡 強制的にJSON構文を固定するスキーマ定義（パースエラーの根本治療）
-    article_schema = types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "title": types.Schema(type=types.Type.STRING),
-            "url": types.Schema(type=types.Type.STRING),
-            "summary": types.Schema(
-                type=types.Type.ARRAY,
-                items=types.Schema(type=types.Type.STRING)
-            )
-        },
-        required=["title", "url", "summary"]
-    )
-    
-    response_schema = types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "ai-domestic": types.Schema(type=types.Type.ARRAY, items=article_schema),
-            "ai-overseas": types.Schema(type=types.Type.ARRAY, items=article_schema),
-            "ai-tips": types.Schema(type=types.Type.ARRAY, items=article_schema),
-            "dx-case": types.Schema(type=types.Type.ARRAY, items=article_schema),
-            "business": types.Schema(type=types.Type.ARRAY, items=article_schema),
-            "consulting": types.Schema(type=types.Type.ARRAY, items=article_schema)
-        },
-        required=["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]
-    )
-
     response = model.generate_content(
         prompt, 
         generation_config={
-            "response_mime_type": "application/json",
-            "response_schema": response_schema  # スキーマを適用
+            "response_mime_type": "application/json"
         }
     )
     return response.text
 
 def create_html_site(json_text):
+    # Geminiが返した生のテキストを掃除（Markdownブロックの除去）
+    json_text = json_text.strip()
+    # トリプルバックティックの安全な文字列判定（プログラム破損回避）
+    triple_backtick = "`" * 3
+    if json_text.startswith(triple_backtick):
+        json_text = re.sub(r'^`{3}(?:json)?\n', '', json_text)
+        json_text = re.sub(r'\n`{3}$', '', json_text)
+    json_text = json_text.strip()
+
     try:
-        if json_text.startswith("```"):
-            json_text = json_text.strip("`").replace("json", "", 1).strip()
-            
         data = json.loads(json_text)
     except Exception as e:
-        print(f"Error: JSONのパースに失敗しました。一時的なダミーデータで続行します。 {e}")
-        data = {k: [] for k in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]}
+        print(f"Error: JSONの直接パースに失敗しました。クレンジングを試みます: {e}")
+        try:
+            # 改行や制御文字の崩れを最小限にエスケープしてパースを再試行
+            json_text_clean = json_text.replace('\n', ' ').replace('\r', '')
+            data = json.loads(json_text_clean)
+        except Exception as e_inner:
+            print(f"🚨 クレンジング後もJSONの復旧に失敗しました。空データでサイトを枠だけ生成します: {e_inner}")
+            data = {k: [] for k in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]}
         
     today_str = datetime.now().strftime("%Y年%m%d日")
     
@@ -190,10 +183,15 @@ def create_html_site(json_text):
             cards_html = '<p style="color:var(--text-muted); text-align:center; padding:20px;">（本日の新規投稿はありません）</p>'
         else:
             for art in articles:
-                # ダブルクォーテーション等のHTMLバグを防ぐエスケープ処理
-                title_clean = art.get('title', '無題').replace('"', '&quot;')
-                url_clean = art.get('url', '#')
-                li_elements = "".join([f"<li>{str(item).replace('<', '&lt;')}</li>" for item in art.get("summary", [])])
+                # 属性バグを防ぐため、ダブルクォーテーションをエスケープ
+                title_clean = str(art.get('title', '無題')).replace('"', '&quot;')
+                url_clean = str(art.get('url', '#'))
+                
+                # 要約がリスト（配列）で届いているか、文字列かで処理を分岐
+                summary_items = art.get("summary", [])
+                if isinstance(summary_items, str):
+                    summary_items = [summary_items]
+                li_elements = "".join([f"<li>{str(item).replace('<', '&lt;')}</li>" for item in summary_items])
                 
                 cards_html += f"""
                 <div class="news-card">
@@ -296,6 +294,7 @@ def create_html_site(json_text):
 </body>
 </html>"""
 
+    # データをテンプレートに注入
     final_html = template_html.replace("{{DATE}}", today_str)
     final_html = final_html.replace("{{AI_DOMESTIC}}", genre_html_dict["ai-domestic"])
     final_html = final_html.replace("{{AI_OVERSEAS}}", genre_html_dict["ai-overseas"])
@@ -312,7 +311,7 @@ def send_to_line():
     if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
         raise ValueError("LINEの認証情報が設定されていません。")
 
-    url = "[https://api.line.me/v2/bot/message/push](https://api.line.me/v2/bot/message/push)"
+    url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
@@ -321,10 +320,13 @@ def send_to_line():
     repository_full = os.getenv("GITHUB_REPOSITORY")
     
     if repository_full:
-        github_user, repo_name = repository_full.lower().split("/")
+        # 💡 ドメイン名にあたる「ユーザー名」のみを小文字にして、リポジトリ名のオリジナルケース（大文字等）を維持
+        parts = repository_full.split("/")
+        github_user = parts[0].lower()
+        repo_name = parts[1]
         site_url = f"https://{github_user}.github.io/{repo_name}/"
     else:
-        site_url = "[https://github.com](https://github.com)"
+        site_url = "https://github.com"
     
     today_str = datetime.now().strftime("%m/%d")
 
@@ -354,7 +356,7 @@ def send_to_line():
     if response.status_code != 200:
         print(f"LINE送信エラー: {response.text}")
     else:
-        print("LINEへの通知リンク送信が完了しました。")
+        print(f"LINEへの通知リンク送信が完了しました。送信URL: {site_url}")
 
 if __name__ == "__main__":
     print("6つのジャンル別にRSSソースから重複を排除して取得中...")
