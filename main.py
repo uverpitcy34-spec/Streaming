@@ -1,4 +1,4 @@
-```python
+python
 import os
 import json
 import re
@@ -452,4 +452,3 @@ if __name__ == "__main__":
     print("スマホのLINEへ通知リンクを送信中...")
     send_to_line()
 
-```
