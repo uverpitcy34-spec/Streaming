@@ -134,7 +134,7 @@ def generate_summary(structured_articles_text):
        ここがいけぽん様の最重要メインジャンルです。日経ビジネスや東洋経済等から、企業の広範な情報を網羅するため、データがある限り妥協せず【20本目安】の大ボリュームで手厚く出力してください。
 
     【出力形式の指定】
-    必ず指定の6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
+    必ず指定 of 6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
     余計な説明文や、マークダウン形式の装飾は一切不要です。純粋なJSONテキストのみを返してください。
     各記事オブジェクトは "title", "url", "summary" の3つのキーを持つようにしてください。"summary" は3行程度の要約文の配列（文字列のリスト）とします。
 
@@ -153,7 +153,6 @@ def generate_summary(structured_articles_text):
 def create_html_site(json_text):
     # Geminiが返した生のテキストを掃除（Markdownブロックの除去）
     json_text = json_text.strip()
-    # トリプルバックティックの安全な文字列判定（プログラム破損回避）
     triple_backtick = "`" * 3
     if json_text.startswith(triple_backtick):
         json_text = re.sub(r'^`{3}(?:json)?\n', '', json_text)
@@ -320,11 +319,17 @@ def send_to_line():
     repository_full = os.getenv("GITHUB_REPOSITORY")
     
     if repository_full:
-        # 💡 ドメイン名にあたる「ユーザー名」のみを小文字にして、リポジトリ名のオリジナルケース（大文字等）を維持
         parts = repository_full.split("/")
         github_user = parts[0].lower()
         repo_name = parts[1]
-        site_url = f"https://{github_user}.github.io/{repo_name}/"
+        
+        # 💡 【404対策】リポジトリ名がユーザーサイト用の特別なリポジトリ（ユーザー名.github.io）の場合の判定を追加
+        # この場合、PagesのURLにサブディレクトリはつきません。
+        if repo_name.lower() == f"{github_user}.github.io":
+            site_url = f"https://{github_user}.github.io/"
+        else:
+            # 通常のリポジトリの場合、リポジトリ名の大文字・小文字を完全に維持してサブフォルダを設定
+            site_url = f"https://{github_user}.github.io/{repo_name}/"
     else:
         site_url = "https://github.com"
     
