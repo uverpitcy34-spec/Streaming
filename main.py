@@ -62,6 +62,7 @@ def clean_url(url_string):
     try:
         parsed = urlparse(url_string.strip())
         kv_pairs = parse_qsl(parsed.query)
+        # 不要なマーケティング用パラメータ(utm_*)を排除
         cleaned_kv = [(k, v) for k, v in kv_pairs if not k.startswith("utm_")]
         new_query = urlencode(cleaned_kv)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
@@ -83,6 +84,7 @@ def fetch_all_genres():
         for url in urls:
             try:
                 feed = feedparser.parse(url)
+                # 「5. 経営・ビジネス情報」は大量にプールするため、1メディアあたり15本まで取得
                 max_fetch = 15 if "5." in genre_name else 5
                 
                 for entry in feed.entries[:max_fetch]:
@@ -156,6 +158,7 @@ def generate_summary(structured_articles_text):
     {structured_articles_text}
     """
     
+    # 💡 古いライブラリバージョンでも完全にJSON構造をロックするスキーマ定義
     article_schema = {
         "type": "OBJECT",
         "properties": {
@@ -230,7 +233,6 @@ def create_html_site(json_text):
             for art in articles:
                 title_clean = str(art.get('title', '無題')).replace('"', '&quot;')
                 url_clean = str(art.get('url', '#'))
-                # 💡 各記事の投稿日を回収して表示を整える
                 art_date = str(art.get('date', '最近の投稿'))
                 
                 summary_items = art.get("summary", [])
@@ -238,7 +240,7 @@ def create_html_site(json_text):
                     summary_items = [summary_items]
                 li_elements = "".join([f"<li>{str(item).replace('<', '&lt;')}</li>" for item in summary_items])
                 
-                # 💡 HTMLデザイン：タイトルの下に小さく薄いグレーで投稿日（例：🕒 07/01 08:30）を表示する構造へ改修
+                # 💡 タイトルの下に小さく薄いグレーで投稿日（🕒 07/01 08:30）を表示
                 cards_html += f"""
                 <div class="news-card">
                     <div class="card-summary-trigger" onclick="toggleCard(this)">
