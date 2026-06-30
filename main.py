@@ -5,7 +5,7 @@ import feedparser
 import requests
 import google.generativeai as genai
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # .envファイルから環境変数（鍵）を読み込む
@@ -14,6 +14,9 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_USER_ID = os.getenv("LINE_USER_ID")
+
+# 💡 明示的に日本時間(JST)のタイムゾーンを定義してサーバーの国籍に依存させない
+JST = timezone(timedelta(hours=9))
 
 # ── 【最新版・6大ジャンル設計図】 ──
 GENRE_CHANNELS = {
@@ -59,7 +62,6 @@ def clean_url(url_string):
     try:
         parsed = urlparse(url_string.strip())
         kv_pairs = parse_qsl(parsed.query)
-        # 不要なマーケティング用パラメータ(utm_*)を排除
         cleaned_kv = [(k, v) for k, v in kv_pairs if not k.startswith("utm_")]
         new_query = urlencode(cleaned_kv)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
@@ -70,9 +72,9 @@ def fetch_all_genres():
     structured_data = ""
     seen_links = set()
     
-    # 💡 【緩和】直近120時間（5日間）の記事をプールして土日や更新薄をカバー
-    now = datetime.now()
-    time_threshold = now - timedelta(hours=120)
+    # 日本時間ベースで5日前の足切りラインを算出
+    now_jst = datetime.now(JST)
+    time_threshold = now_jst - timedelta(hours=120)
 
     for genre_name, urls in GENRE_CHANNELS.items():
         structured_data += f"\n\n【{genre_name}】\n"
@@ -81,7 +83,6 @@ def fetch_all_genres():
         for url in urls:
             try:
                 feed = feedparser.parse(url)
-                # 「5. 経営・ビジネス情報」は大量にプールするため、1メディアあたり15本まで取得
                 max_fetch = 15 if "5." in genre_name else 5
                 
                 for entry in feed.entries[:max_fetch]:
@@ -89,24 +90,33 @@ def fetch_all_genres():
                     if not link or link in seen_links:
                         continue
                     
-                    # 💡 【緩和】日付判定の失敗による記事全除外バグを防ぐ
+                    # 記事の投稿日時を解析（表示用・およびフィルター用）
+                    date_str = ""
                     published_tok = entry.get("published_parsed") or entry.get("updated_parsed")
                     if published_tok:
                         try:
-                            published_dt = datetime(*published_tok[:6])
-                            if published_dt < time_threshold:
+                            # タイムゾーンを考慮しない形(Naive)で一旦復元し、UTCとみなしてJSTに変換
+                            dt_naive = datetime(*published_tok[:6])
+                            dt_utc = dt_naive.replace(tzinfo=timezone.utc)
+                            dt_jst = dt_utc.astimezone(JST)
+                            
+                            if dt_jst < time_threshold:
                                 continue
+                            date_str = dt_jst.strftime("%m/%d %H:%M")
                         except Exception:
-                            # 日付のパースに失敗した場合は、除外せず最新記事として救済
                             pass
+                    
+                    # 日付が取れなかった場合のバックアップ表記
+                    if not date_str:
+                        date_str = "最近の投稿"
                     
                     seen_links.add(link)
                     title = entry.title.strip() if entry.title else "無題"
                     summary = entry.get("summary", "")[:250].strip()
-                    # 改行や不適切な空白の掃除
                     summary = re.sub(r'\s+', ' ', summary)
                     
-                    structured_data += f"- タイトル: {title}\n  URL: {link}\n  概要: {summary}\n"
+                    # 💡 Geminiへのインプット情報に「投稿日」も付与する
+                    structured_data += f"- タイトル: {title}\n  URL: {link}\n  投稿日: {date_str}\n  概要: {summary}\n"
                     genre_articles_count += 1
             except Exception as e:
                 print(f"Warning: Failed to parse {url}. Error: {e}")
@@ -130,35 +140,34 @@ def generate_summary(structured_articles_text):
 
     【絶対厳守ルール】
     1. 提供されたデータに実在しないニュース、存在しないURLは絶対に創作しないでください（ハルシネーションの徹底排除）。
-    2. 各記事のURLは、データにあるものをそのまま完全に出力してください。
+    2. 各記事のURL・投稿日は、データにあるものをそのまま完全に出力してください。
     3. 海外ソース（英語のタイトルや本文）は、必ず高度なビジネス日本語に翻訳した上で要約を行ってください。
 
     【🔥 配信本数ルール（厳守）】
-    ・「ai-domestic」「ai-overseas」「ai-tips」「dx-case」「consulting」の各ジャンル：
-       重要な情報に集中するため、特に有益なものを厳選して【各5〜6本目安】で出力してください。
-    ・「business」ジャンル：
-       ここがいけぽん様の最重要メインジャンルです。日経ビジネスや東洋経済等から、企業の広範な情報を網羅するため、データがある限り妥協せず【20本目安】の大ボリュームで手厚く出力してください。
+    ・「ai-domestic」「ai-overseas」「ai-tips」「dx-case」「consulting」の各ジャンル：各5〜6本目安
+    ・「business」ジャンル：データがある限り妥協せず【20本目安】の大ボリュームで出力
 
     【出力形式の指定】
     指定された6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
-    各記事オブジェクトは "title", "url", "summary" の3つのキーを持つ必要があります。"summary" は3行程度の要約文の配列（文字列のリスト）としてください。
+    各記事オブジェクトは "title", "url", "date", "summary" の4つのキーを持つ必要があります。"date"には提供データにある投稿日（例: "07/01 08:30"など）をそのまま入れてください。
+    "summary" は3行程度の要約文の配列（文字列のリスト）としてください。
 
     【提供されたジャンル別・記事データ】
     {structured_articles_text}
     """
     
-    # 💡 【安定化の核】ライブラリのバージョンを問わず完全にJSON構造をロックするスキーマ定義
     article_schema = {
         "type": "OBJECT",
         "properties": {
             "title": {"type": "STRING"},
             "url": {"type": "STRING"},
+            "date": {"type": "STRING"},  # 日付用キーを追加
             "summary": {
                 "type": "ARRAY",
                 "items": {"type": "STRING"}
             }
         },
-        "required": ["title", "url", "summary"]
+        "required": ["title", "url", "date", "summary"]
     }
     
     response_schema = {
@@ -178,13 +187,12 @@ def generate_summary(structured_articles_text):
         prompt, 
         generation_config={
             "response_mime_type": "application/json",
-            "response_schema": response_schema  # スキーマを強制適用
+            "response_schema": response_schema
         }
     )
     return response.text
 
 def create_html_site(json_text):
-    # Geminiが返した生のテキストを掃除（Markdownブロックの除去）
     json_text = json_text.strip()
     triple_backtick = "`" * 3
     if json_text.startswith(triple_backtick):
@@ -195,25 +203,12 @@ def create_html_site(json_text):
     try:
         data = json.loads(json_text)
     except Exception as e:
-        print(f"Error: JSONの直接パースに失敗しました。クレンジングを試みます: {e}")
-        try:
-            # 改行や制御文字の崩れを最小限にエスケープしてパースを再試行
-            json_text_clean = json_text.replace('\n', ' ').replace('\r', '')
-            data = json.loads(json_text_clean)
-        except Exception as e_inner:
-            print(f"🚨 クレンジング後もJSONの復旧に失敗しました。空データでサイトを枠だけ生成します: {e_inner}")
-            data = {}
+        print(f"Error: JSONのパースに失敗しました。 {e}")
+        data = {}
         
-    # 💡 【揺らぎ吸収】Geminiがキー名をハイフンではなくアンダースコア等で返しても確実にマッピングを揃える
     normalized_data = {}
     for standard_key in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]:
-        possible_keys = [
-            standard_key,
-            standard_key.replace("-", "_"),
-            standard_key.replace("_", "-"),
-            standard_key.lower(),
-            standard_key.upper()
-        ]
+        possible_keys = [standard_key, standard_key.replace("-", "_"), standard_key.replace("_", "-")]
         articles = []
         for pk in possible_keys:
             if pk in data and isinstance(data[pk], list) and len(data[pk]) > 0:
@@ -221,7 +216,8 @@ def create_html_site(json_text):
                 break
         normalized_data[standard_key] = articles
         
-    today_str = datetime.now().strftime("%Y年%m%d日")
+    # 💡 表示用のメインヘッダー日付を完全に日本時間ベースにする
+    today_str = datetime.now(JST).strftime("%Y年%m%d日")
     
     genre_html_dict = {}
     for genre_key in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]:
@@ -232,20 +228,24 @@ def create_html_site(json_text):
             cards_html = '<p style="color:var(--text-muted); text-align:center; padding:20px;">（本日の新規投稿はありません）</p>'
         else:
             for art in articles:
-                # 属性バグを防ぐため、ダブルクォーテーションをエスケープ
                 title_clean = str(art.get('title', '無題')).replace('"', '&quot;')
                 url_clean = str(art.get('url', '#'))
+                # 💡 各記事の投稿日を回収して表示を整える
+                art_date = str(art.get('date', '最近の投稿'))
                 
-                # 要約がリスト（配列）で届いているか、文字列かで処理を分岐
                 summary_items = art.get("summary", [])
                 if isinstance(summary_items, str):
                     summary_items = [summary_items]
                 li_elements = "".join([f"<li>{str(item).replace('<', '&lt;')}</li>" for item in summary_items])
                 
+                # 💡 HTMLデザイン：タイトルの下に小さく薄いグレーで投稿日（例：🕒 07/01 08:30）を表示する構造へ改修
                 cards_html += f"""
                 <div class="news-card">
                     <div class="card-summary-trigger" onclick="toggleCard(this)">
-                        <h2 class="news-title">{title_clean}</h2>
+                        <div class="title-block">
+                            <h2 class="news-title">{title_clean}</h2>
+                            <div class="news-date">🕒 {art_date}</div>
+                        </div>
                         <svg class="icon-arrow" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
                     </div>
                     <div class="card-details">
@@ -284,7 +284,9 @@ def create_html_site(json_text):
         .news-card { background-color: var(--card-background); border: 1px solid var(--border-color); border-radius: 12px; margin-bottom: 12px; overflow: hidden; transition: box-shadow 0.2s; }
         .card-summary-trigger { padding: 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; user-select: none; }
         .card-summary-trigger:active { background-color: #f1f5f9; }
-        .news-title { margin: 0; font-size: 0.95rem; font-weight: 600; color: var(--text-main); flex-grow: 1; }
+        .title-block { display: flex; flex-direction: column; gap: 4px; flex-grow: 1; }
+        .news-title { margin: 0; font-size: 0.95rem; font-weight: 600; color: var(--text-main); line-height: 1.4; }
+        .news-date { font-size: 0.75rem; color: var(--text-muted); font-weight: 500; }
         .icon-arrow { width: 20px; height: 20px; fill: var(--text-muted); transition: transform 0.2s; flex-shrink: 0; margin-top: 2px; }
         .card-details { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; background-color: #fafafa; border-top: 0px solid var(--border-color); }
         .card-details-inner { padding: 16px; }
@@ -343,7 +345,6 @@ def create_html_site(json_text):
 </body>
 </html>"""
 
-    # データをテンプレートに注入
     final_html = template_html.replace("{{DATE}}", today_str)
     final_html = final_html.replace("{{AI_DOMESTIC}}", genre_html_dict["ai-domestic"])
     final_html = final_html.replace("{{AI_OVERSEAS}}", genre_html_dict["ai-overseas"])
@@ -380,7 +381,8 @@ def send_to_line():
     else:
         site_url = "https://github.com"
     
-    today_str = datetime.now().strftime("%m/%d")
+    # 💡 LINEに表示する配信日付も完全に日本時間(JST)ベースに変更
+    today_str = datetime.now(JST).strftime("%m/%d")
 
     payload = {
         "to": LINE_USER_ID,
