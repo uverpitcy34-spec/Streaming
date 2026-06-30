@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import re
@@ -55,6 +56,19 @@ GENRE_CHANNELS = {
     ]
 }
 
+# 💡 経営・ビジネス情報に混ざるプライベート系ノイズ記事を完全にシャットアウトするキーワード群
+EXCLUDE_KEYWORDS = [
+    "| ライフ |", 
+    "| エンタメ |", 
+    "| カルチャー |", 
+    "| スポーツ |", 
+    "| 旅行 |", 
+    "| グルメ |", 
+    "| ファッション |", 
+    "| コミック |",
+    "芸能", "亀梨和也", "田中みな実", "結婚", "妊娠", "熱愛"
+]
+
 def clean_url(url_string):
     """URLからトラッキング用のクエリパラメータやフラグメントを削除して正規化する"""
     if not url_string:
@@ -84,12 +98,25 @@ def fetch_all_genres():
         for url in urls:
             try:
                 feed = feedparser.parse(url)
-                # 「5. 経営・ビジネス情報」は大量にプールするため、1メディアあたり15本まで取得
                 max_fetch = 15 if "5." in genre_name else 5
                 
                 for entry in feed.entries[:max_fetch]:
                     link = clean_url(entry.link)
                     if not link or link in seen_links:
+                        continue
+                    
+                    title = entry.title.strip() if entry.title else "無題"
+                    summary = entry.get("summary", "")[:250].strip()
+                    summary = re.sub(r'\s+', ' ', summary)
+
+                    # 💡 【ノイズフィルタ】タイトルまたは概要に除外キーワードが含まれる場合はGeminiに送らず完全スキップ
+                    should_exclude = False
+                    for kw in EXCLUDE_KEYWORDS:
+                        if kw in title or kw in summary:
+                            should_exclude = True
+                            break
+                    if should_exclude:
+                        print(f"Skipped unwanted article (filtered): {title}")
                         continue
                     
                     # 記事の投稿日時を解析（表示用・およびフィルター用）
@@ -113,11 +140,8 @@ def fetch_all_genres():
                         date_str = "最近の投稿"
                     
                     seen_links.add(link)
-                    title = entry.title.strip() if entry.title else "無題"
-                    summary = entry.get("summary", "")[:250].strip()
-                    summary = re.sub(r'\s+', ' ', summary)
                     
-                    # 💡 Geminiへのインプット情報に「投稿日」も付与する
+                    # Geminiへのインプット情報に「投稿日」も付与する
                     structured_data += f"- タイトル: {title}\n  URL: {link}\n  投稿日: {date_str}\n  概要: {summary}\n"
                     genre_articles_count += 1
             except Exception as e:
@@ -144,10 +168,11 @@ def generate_summary(structured_articles_text):
     1. 提供されたデータに実在しないニュース、存在しないURLは絶対に創作しないでください（ハルシネーションの徹底排除）。
     2. 各記事のURL・投稿日は、データにあるものをそのまま完全に出力してください。
     3. 海外ソース（英語のタイトルや本文）は、必ず高度なビジネス日本語に翻訳した上で要約を行ってください。
+    4. 💡 芸能、恋愛、結婚、健康、医療、美容、ペット、趣味、ライフハック、生活お悩み相談などの「プライベート・生活情報（特にタイトルに『ライフ』や『エンタメ』が含まれるもの）」は、ビジネスブリーフィングとしての質を保つために完全に除外・排除してください。
 
     【🔥 配信本数ルール（厳守）】
     ・「ai-domestic」「ai-overseas」「ai-tips」「dx-case」「consulting」の各ジャンル：各5〜6本目安
-    ・「business」ジャンル：データがある限り妥協せず【20本目安】の大ボリュームで出力
+    ・「business」ジャンル：純粋な経済・経営・企業活動のニュースの中から、データがある限り妥協せず【20本目安】の大ボリュームで出力
 
     【出力形式の指定】
     指定された6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
@@ -158,7 +183,7 @@ def generate_summary(structured_articles_text):
     {structured_articles_text}
     """
     
-    # 💡 古いライブラリバージョンでも完全にJSON構造をロックするスキーマ定義
+    # 古いライブラリバージョンでも完全にJSON構造をロックするスキーマ定義
     article_schema = {
         "type": "OBJECT",
         "properties": {
@@ -219,8 +244,8 @@ def create_html_site(json_text):
                 break
         normalized_data[standard_key] = articles
         
-    # 💡 表示用のメインヘッダー日付を完全に日本時間ベースにする
-    today_str = datetime.now(JST).strftime("%Y年%m%d日")
+    # 💡 表示用のメインヘッダー日付を「2026年07月01日」のように正しく表示
+    today_str = datetime.now(JST).strftime("%Y年%m月%d日")
     
     genre_html_dict = {}
     for genre_key in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]:
@@ -240,7 +265,7 @@ def create_html_site(json_text):
                     summary_items = [summary_items]
                 li_elements = "".join([f"<li>{str(item).replace('<', '&lt;')}</li>" for item in summary_items])
                 
-                # 💡 タイトルの下に小さく薄いグレーで投稿日（🕒 07/01 08:30）を表示
+                # タイトルの下に小さく薄いグレーで投稿日（🕒 07/01 08:30）を表示
                 cards_html += f"""
                 <div class="news-card">
                     <div class="card-summary-trigger" onclick="toggleCard(this)">
@@ -383,7 +408,7 @@ def send_to_line():
     else:
         site_url = "https://github.com"
     
-    # 💡 LINEに表示する配信日付も完全に日本時間(JST)ベースに変更
+    # LINEに表示する配信日付も完全に日本時間(JST)ベース
     today_str = datetime.now(JST).strftime("%m/%d")
 
     payload = {
@@ -426,3 +451,5 @@ if __name__ == "__main__":
     
     print("スマホのLINEへ通知リンクを送信中...")
     send_to_line()
+
+```
