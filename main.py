@@ -3,6 +3,7 @@ import json
 import feedparser
 import requests
 import google.generativeai as genai
+from google.generativeai import types  # スキーマ定義用にインポート
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -57,13 +58,9 @@ def clean_url(url_string):
         return ""
     try:
         parsed = urlparse(url_string.strip())
-        # utm_* などの不要なパラメータを排除
         kv_pairs = parse_qsl(parsed.query)
         cleaned_kv = [(k, v) for k, v in kv_pairs if not k.startswith("utm_")]
-        
-        # 不要なパラメータを除去したクエリ文字列を再構成
         new_query = urlencode(cleaned_kv)
-        # フラグメント(＃)も除去してクレンジング
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
     except Exception:
         return url_string.strip()
@@ -72,7 +69,6 @@ def fetch_all_genres():
     structured_data = ""
     seen_links = set()
     
-    # 直近72時間（3日間）の記事をプール
     now = datetime.now()
     time_threshold = now - timedelta(hours=72)
 
@@ -83,17 +79,13 @@ def fetch_all_genres():
         for url in urls:
             try:
                 feed = feedparser.parse(url)
-                
-                # 「5. 経営・ビジネス情報」は大量にプールするため、1メディアあたり15本まで取得
                 max_fetch = 15 if "5." in genre_name else 5
                 
                 for entry in feed.entries[:max_fetch]:
                     link = clean_url(entry.link)
-                    
                     if not link or link in seen_links:
                         continue
                     
-                    # 日付チェック
                     published_tok = entry.get("published_parsed") or entry.get("updated_parsed")
                     if published_tok:
                         published_dt = datetime(*published_tok[:6])
@@ -137,27 +129,56 @@ def generate_summary(structured_articles_text):
     ・「business」ジャンル：
        ここがいけぽん様の最重要メインジャンルです。日経ビジネスや東洋経済等から、企業の広範な情報を網羅するため、データがある限り妥協せず【20本目安】の大ボリュームで手厚く出力してください。
 
-    【出力形式の指定】
-    必ず指定の6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
-    マークダウン形式（```json ... ```）の装飾は一切不要です。純粋なJSONテキストのみを返してください。
-    各ジャンルの値は記事オブジェクトの配列（リスト）とし、各記事は "title", "url", "summary" の3つのキーを持つようにしてください。"summary" は3行程度の要約文の配列（文字列のリスト）とします。
-
     【提供されたジャンル別・記事データ】
     {structured_articles_text}
     """
     
+    # 💡 強制的にJSON構文を固定するスキーマ定義（パースエラーの根本治療）
+    article_schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "title": types.Schema(type=types.Type.STRING),
+            "url": types.Schema(type=types.Type.STRING),
+            "summary": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.STRING)
+            )
+        },
+        required=["title", "url", "summary"]
+    )
+    
+    response_schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "ai-domestic": types.Schema(type=types.Type.ARRAY, items=article_schema),
+            "ai-overseas": types.Schema(type=types.Type.ARRAY, items=article_schema),
+            "ai-tips": types.Schema(type=types.Type.ARRAY, items=article_schema),
+            "dx-case": types.Schema(type=types.Type.ARRAY, items=article_schema),
+            "business": types.Schema(type=types.Type.ARRAY, items=article_schema),
+            "consulting": types.Schema(type=types.Type.ARRAY, items=article_schema)
+        },
+        required=["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]
+    )
+
     response = model.generate_content(
         prompt, 
-        generation_config={"response_mime_type": "application/json"}
+        generation_config={
+            "response_mime_type": "application/json",
+            "response_schema": response_schema  # スキーマを適用
+        }
     )
     return response.text
 
 def create_html_site(json_text):
-    # Geminiが万が一マークダウンの ```json を含めて返した場合のためのクレンジング
-    if json_text.startswith("```"):
-        json_text = json_text.strip("`").replace("json", "", 1).strip()
+    try:
+        if json_text.startswith("```"):
+            json_text = json_text.strip("`").replace("json", "", 1).strip()
+            
+        data = json.loads(json_text)
+    except Exception as e:
+        print(f"Error: JSONのパースに失敗しました。一時的なダミーデータで続行します。 {e}")
+        data = {k: [] for k in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]}
         
-    data = json.loads(json_text)
     today_str = datetime.now().strftime("%Y年%m%d日")
     
     genre_html_dict = {}
@@ -169,11 +190,15 @@ def create_html_site(json_text):
             cards_html = '<p style="color:var(--text-muted); text-align:center; padding:20px;">（本日の新規投稿はありません）</p>'
         else:
             for art in articles:
-                li_elements = "".join([f"<li>{item}</li>" for item in art.get("summary", [])])
+                # ダブルクォーテーション等のHTMLバグを防ぐエスケープ処理
+                title_clean = art.get('title', '無題').replace('"', '&quot;')
+                url_clean = art.get('url', '#')
+                li_elements = "".join([f"<li>{str(item).replace('<', '&lt;')}</li>" for item in art.get("summary", [])])
+                
                 cards_html += f"""
                 <div class="news-card">
                     <div class="card-summary-trigger" onclick="toggleCard(this)">
-                        <h2 class="news-title">{art.get('title')}</h2>
+                        <h2 class="news-title">{title_clean}</h2>
                         <svg class="icon-arrow" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
                     </div>
                     <div class="card-details">
@@ -181,7 +206,7 @@ def create_html_site(json_text):
                             <ul class="summary-list">
                                 {li_elements}
                             </ul>
-                            <a href="{art.get('url')}" target="_blank" class="btn-source">ソース元で記事を読む ↗</a>
+                            <a href="{url_clean}" target="_blank" class="btn-source">ソース元で記事を読む ↗</a>
                         </div>
                     </div>
                 </div>
@@ -271,7 +296,6 @@ def create_html_site(json_text):
 </body>
 </html>"""
 
-    # データをテンプレートに流し込む
     final_html = template_html.replace("{{DATE}}", today_str)
     final_html = final_html.replace("{{AI_DOMESTIC}}", genre_html_dict["ai-domestic"])
     final_html = final_html.replace("{{AI_OVERSEAS}}", genre_html_dict["ai-overseas"])
@@ -288,20 +312,19 @@ def send_to_line():
     if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
         raise ValueError("LINEの認証情報が設定されていません。")
 
-    url = "https://api.line.me/v2/bot/message/push"
+    url = "[https://api.line.me/v2/bot/message/push](https://api.line.me/v2/bot/message/push)"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
     
-    # GitHub Actionsの環境変数からリポジトリ情報を取得
     repository_full = os.getenv("GITHUB_REPOSITORY")
     
     if repository_full:
         github_user, repo_name = repository_full.lower().split("/")
         site_url = f"https://{github_user}.github.io/{repo_name}/"
     else:
-        site_url = "https://github.com"
+        site_url = "[https://github.com](https://github.com)"
     
     today_str = datetime.now().strftime("%m/%d")
 
