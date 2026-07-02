@@ -2,8 +2,10 @@ name: Morning News Bot
 
 on:
   schedule:
-    # 毎日 協定世界時(UTC) 22:00 に実行 ＝ 日本時間(JST)で【毎朝 AM 7:00】
-    - cron: '0 22 * * *'
+    # 💡 混雑（大渋滞）を100%回避するため、あえて「18分」という超中途半端な端数に設定します！
+    # 毎日 協定世界時(UTC) 20:18 に実行 ＝ 日本時間(JST)で【毎朝 AM 5:18】
+    # これにより割り当て待ちキューをスッと通過でき、毎朝確実に朝6時前後に配信が完了します。
+    - cron: '18 20 * * *'
   # GitHubの画面からいつでも手動で実行（テスト）できるようにする設定
   workflow_dispatch:
 
@@ -16,7 +18,6 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    # 大容量の要約処理が途中で強制終了されないよう、30分の実行猶予を明示的に設定
     timeout-minutes: 30
     
     steps:
@@ -30,11 +31,9 @@ jobs:
 
     - name: Install dependencies
       run: |
-        # 必要なライブラリに加え、環境変数管理のための python-dotenv もインストール
         pip install google-generativeai requests feedparser python-dotenv
 
     - name: Run script
-      # GitHub Secretsに登録した3つの鍵に加え、標準のレポジトリ名環境変数を引き渡します
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
@@ -46,7 +45,7 @@ jobs:
     - name: Upload artifact for Pages
       uses: actions/upload-pages-artifact@v3
       with:
-        path: '.' # リポジトリのルートにある index.html をアップロード対象にする
+        path: '.'
 
     - name: Deploy to GitHub Pages
       uses: actions/deploy-pages@v4
