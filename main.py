@@ -21,65 +21,81 @@ LINE_USER_ID = os.getenv("LINE_USER_ID")
 # 日本時間(JST)のタイムゾーンを定義
 JST = timezone(timedelta(hours=9))
 
-# ── 【6大ジャンル設計図】 ──
-GENRE_CHANNELS = {
-    "1. AI最新動向（国内）": [
-        "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",
-        "https://www.publickey1.jp/atom.xml",
-        "https://ascii.jp/rss/rss_ai.xml"
-    ],
-    "2. AI最新動向（海外・英語）": [
-        "https://techcrunch.com/category/artificial-intelligence/feed/",
-        "https://venturebeat.com/category/ai/feed/",
-        "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
-    ],
-    "3. AI実務Tips・Python・データサイエンス": [
-        "https://qiita.com/tags/ai/feed",
-        "https://qiita.com/tags/langchain/feed",
-        "https://qiita.com/tags/python/feed",
-        "https://qiita.com/tags/datascience/feed",
-        "https://qiita.com/tags/machine-learning/feed",
-        "https://zenn.dev/topics/llm/feed",
-        "https://zenn.dev/topics/ai/feed",
-        "https://zenn.dev/topics/python/feed",
-        "https://zenn.dev/topics/datascience/feed"
-    ],
-    "4. 企業DX・IT導入事例": [
-        "https://enterprisezine.jp/rss/new/",
-        "https://japan.zdnet.com/rss/",
-        "https://xtech.nikkei.com/rss/index.rdf",
-        "https://rss.itmedia.co.jp/rss/2.0/business.xml"
-    ],
-    "5. 経営・ビジネス情報（日経等）": [
-        "https://business.nikkei.com/rss/bn/nb.rdf",
-        "https://toyokeizai.net/list/feed/rss",
-        "https://diamond.jp/rss/articles",
-        "https://www.dhbr.net/rss"
-    ],
-    "6. コンサルティング業界動向": [
-        "https://www.consulnews.jp/feed/",
-        "https://ascii.jp/rss/rss_business.xml",
-        "https://rss.itmedia.co.jp/rss/2.0/enterprise.xml"
-    ]
-}
+# ── 【6大ジャンル設計図と内部キーの対応】 ──
+GENRE_CONFIG = [
+    {
+        "key": "ai-domestic",
+        "name": "1. AI最新動向（国内）",
+        "urls": [
+            "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",
+            "https://www.publickey1.jp/atom.xml",
+            "https://ascii.jp/rss/rss_ai.xml"
+        ]
+    },
+    {
+        "key": "ai-overseas",
+        "name": "2. AI最新動向（海外・英語）",
+        "urls": [
+            "https://techcrunch.com/category/artificial-intelligence/feed/",
+            "https://venturebeat.com/category/ai/feed/",
+            "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
+        ]
+    },
+    {
+        "key": "ai-tips",
+        "name": "3. AI実務Tips・Python・データサイエンス",
+        "urls": [
+            "https://qiita.com/tags/ai/feed",
+            "https://qiita.com/tags/langchain/feed",
+            "https://qiita.com/tags/python/feed",
+            "https://qiita.com/tags/datascience/feed",
+            "https://qiita.com/tags/machine-learning/feed",
+            "https://zenn.dev/topics/llm/feed",
+            "https://zenn.dev/topics/ai/feed",
+            "https://zenn.dev/topics/python/feed",
+            "https://zenn.dev/topics/datascience/feed"
+        ]
+    },
+    {
+        "key": "dx-case",
+        "name": "4. 企業DX・IT導入事例",
+        "urls": [
+            "https://enterprisezine.jp/rss/new/",
+            "https://japan.zdnet.com/rss/",
+            "https://xtech.nikkei.com/rss/index.rdf",
+            "https://rss.itmedia.co.jp/rss/2.0/business.xml"
+        ]
+    },
+    {
+        "key": "business",
+        "name": "5. 経営・ビジネス情報（日経等）",
+        "urls": [
+            "https://business.nikkei.com/rss/bn/nb.rdf",
+            "https://toyokeizai.net/list/feed/rss",
+            "https://diamond.jp/rss/articles",
+            "https://www.dhbr.net/rss"
+        ]
+    },
+    {
+        "key": "consulting",
+        "name": "6. コンサルティング業界動向",
+        "urls": [
+            "https://www.consulnews.jp/feed/",
+            "https://ascii.jp/rss/rss_business.xml",
+            "https://rss.itmedia.co.jp/rss/2.0/enterprise.xml"
+        ]
+    }
+]
 
-# プライベート系・雑多なノイズ記事を除外するためのキーワード群
+# 除外キーワードリスト
 EXCLUDE_KEYWORDS = [
-    "| ライフ |", 
-    "| キャリア |", 
-    "| エンタメ |", 
-    "| カルチャー |", 
-    "| スポーツ |", 
-    "| 旅行 |", 
-    "| グルメ |", 
-    "| ファッション |", 
-    "| コミック |",
-    "| 恋愛・結婚 |",
+    "| ライフ |", "| キャリア |", "| エンタメ |", "| カルチャー |", "| スポーツ |", 
+    "| 旅行 |", "| グルメ |", "| ファッション |", "| コミック |", "| 恋愛・結婚 |",
     "芸能", "亀梨和也", "田中みな実", "結婚", "妊娠", "熱愛", "占い", "レシピ", "美容"
 ]
 
 def clean_url(url_string):
-    """URLからトラッキング用のクエリパラメータ等を削除して正規化する"""
+    """URLからトラッキングパラメータを削除して正規化"""
     if not url_string:
         return ""
     try:
@@ -91,106 +107,90 @@ def clean_url(url_string):
     except Exception:
         return url_string.strip()
 
-def fetch_all_genres():
-    """RSSフィードから過去7日間の記事を取得して整理する"""
-    structured_data = ""
+def fetch_articles_for_genre(urls):
+    """指定されたフィード一覧から過去7日間の記事を取得"""
     seen_links = set()
+    genre_articles = []
     
     now_jst = datetime.now(JST)
     time_threshold = now_jst - timedelta(days=7)
 
-    for genre_name, urls in GENRE_CHANNELS.items():
-        structured_data += f"\n\n【{genre_name}】\n"
-        genre_articles = []
-        
-        for url in urls:
-            try:
-                feed = feedparser.parse(url)
-                # 週最大70件（1日10件×7日）をカバーするため、RSSからの取得数を引き上げ
-                for entry in feed.entries[:30]:
-                    link = clean_url(entry.link)
-                    if not link or link in seen_links:
-                        continue
-                    
-                    title = entry.title.strip() if entry.title else "無題"
-                    summary = entry.get("summary", "")[:250].strip()
-                    summary = re.sub(r'\s+', ' ', summary)
-
-                    # 除外キーワードのフィルタリング
-                    if any(kw in title or kw in summary for kw in EXCLUDE_KEYWORDS):
-                        continue
-                    
-                    # 記事の投稿日時を解析（JSTに統一）
-                    dt_jst = None
-                    date_str = ""
-                    published_tok = entry.get("published_parsed") or entry.get("updated_parsed")
-                    if published_tok:
-                        try:
-                            dt_naive = datetime(*published_tok[:6])
-                            dt_utc = dt_naive.replace(tzinfo=timezone.utc)
-                            dt_jst = dt_utc.astimezone(JST)
-                            
-                            # 過去7日より古い記事は除外
-                            if dt_jst < time_threshold:
-                                continue
-                            date_str = dt_jst.strftime("%m/%d %H:%M")
-                        except Exception:
-                            pass
-                    
-                    if not date_str:
-                        date_str = "最近の投稿"
-                        dt_jst = now_jst - timedelta(days=3)
-                    
-                    seen_links.add(link)
-                    genre_articles.append({
-                        "title": title,
-                        "url": link,
-                        "date_str": date_str,
-                        "dt_jst": dt_jst,
-                        "summary": summary
-                    })
-            except Exception as e:
-                print(f"Warning: Failed to parse {url}. Error: {e}")
-                continue
+    for url in urls:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:50]:  # 十分な件数を取得
+                link = clean_url(entry.link)
+                if not link or link in seen_links:
+                    continue
                 
-        # 投稿日時の新しい順にソート
-        genre_articles.sort(key=lambda x: x["dt_jst"], reverse=True)
+                title = entry.title.strip() if entry.title else "無題"
+                summary = entry.get("summary", "")[:250].strip()
+                summary = re.sub(r'\s+', ' ', summary)
 
-        if not genre_articles:
-            structured_data += "(このジャンルの過去1週間の新規投稿はありません)\n"
-        else:
-            for art in genre_articles:
-                structured_data += f"- タイトル: {art['title']}\n  URL: {art['url']}\n  投稿日: {art['date_str']}\n  概要: {art['summary']}\n"
+                if any(kw in title or kw in summary for kw in EXCLUDE_KEYWORDS):
+                    continue
+                
+                dt_jst = None
+                date_str = ""
+                published_tok = entry.get("published_parsed") or entry.get("updated_parsed")
+                if published_tok:
+                    try:
+                        dt_naive = datetime(*published_tok[:6])
+                        dt_utc = dt_naive.replace(tzinfo=timezone.utc)
+                        dt_jst = dt_utc.astimezone(JST)
+                        
+                        if dt_jst < time_threshold:
+                            continue
+                        date_str = dt_jst.strftime("%m/%d %H:%M")
+                    except Exception:
+                        pass
+                
+                if not date_str:
+                    date_str = "最近の投稿"
+                    dt_jst = now_jst - timedelta(days=3)
+                
+                seen_links.add(link)
+                genre_articles.append({
+                    "title": title,
+                    "url": link,
+                    "date_str": date_str,
+                    "dt_jst": dt_jst,
+                    "summary": summary
+                })
+        except Exception as e:
+            print(f"Warning: Failed to parse {url}. Error: {e}")
+            continue
             
-    return structured_data
+    # 投稿日時の新しい順（降順）にソート
+    genre_articles.sort(key=lambda x: x["dt_jst"], reverse=True)
+    return genre_articles
 
-def generate_summary(structured_articles_text):
-    """Gemini APIを使用して要約と構造化JSONを生成する"""
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY が設定されていません。")
-        
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
+def summarize_single_genre(client, genre_name, articles):
+    """1つのカテゴリーごとにGemini APIで要約・翻訳を生成（トークン制限回避のため個別処理）"""
+    if not articles:
+        return []
+
+    # テキストデータの作成
+    articles_text = ""
+    for art in articles:
+        articles_text += f"- タイトル: {art['title']}\n  URL: {art['url']}\n  投稿日: {art['date_str']}\n  概要: {art['summary']}\n"
+
     prompt = f"""
-    あなたはプロフェッショナルなコンサルタントの右腕となる、非常に優秀なシニアリサーチャーです。
-    提供された【ジャンル別・記事データ】から重要トピックを厳選し、指定の【配信本数ルール】を厳格に守って、日本の読者向けにニュースデータを抽出・翻訳・要約してください。
+    あなたはビジネスニュースの分析プロフェッショナルです。
+    提供された【{genre_name}】の記事リストから、**1日あたり最大10件（過去7日間で合計最大70件）**を抽出・翻訳・要約してください。
 
     【絶対厳守ルール】
-    1. 提供されたデータに実在しないニュース、存在しないURLは絶対に創作しないでください（ハルシネーションの徹底排除）。
-    2. 各記事のURL・投稿日は、データにあるものをそのまま完全に出力してください。
-    3. 海外ソース（英語のタイトルや本文）は、要約文だけでなく【タイトルも必ず自然で洗練されたビジネス日本語に翻訳】して出力してください。英語タイトルのまま出力することは厳禁です。
-    4. 芸能、恋愛、結婚、健康、医療、美容、趣味、生活お悩み相談などのプライベート情報は完全に除外してください。
-    5. 各ジャンル内の記事は、必ず「投稿日が新しい順（降順）」になるよう並び順を維持して出力してください。
+    1. 提供データに存在しないURLやタイトルは絶対に捏造しないでください。
+    2. URLと投稿日（date）はデータにあるものをそのまま使用してください。
+    3. 英語のタイトル・概要は、必ず【自然で高品質なビジネス日本語に翻訳】してください。
+    4. 各記事の要約（summary）は、箇条書き2行（文字列の配列）で簡潔かつ論理的に記述してください。
+    5. 投稿日が新しい順（降順）に並べて出力してください。
+    6. **目標件数**: 1日約10件、過去1週間で**最大70件**まで抽出してください（データ数が足りない場合は存在する全件を出力）。
 
-    【配信本数ルール（厳守）】
-    ・「ai-domestic」「ai-overseas」「ai-tips」「dx-case」「business」「consulting」の全カテゴリ：
-      1日あたり10件目安、**過去1週間（7日間）で最大70件**のボリュームを出力してください。
-      （※データ件数が70件に満たない場合は、存在する限りの記事データを全て妥協せず出力してください）
-
-    【提供されたジャンル別・記事データ】
-    {structured_articles_text}
+    【対象データ】
+    {articles_text}
     """
-    
+
     article_schema = {
         "type": "OBJECT",
         "properties": {
@@ -204,67 +204,72 @@ def generate_summary(structured_articles_text):
         },
         "required": ["title", "url", "date", "summary"]
     }
-    
+
     response_schema = {
         "type": "OBJECT",
         "properties": {
-            "ai-domestic": {"type": "ARRAY", "items": article_schema},
-            "ai-overseas": {"type": "ARRAY", "items": article_schema},
-            "ai-tips": {"type": "ARRAY", "items": article_schema},
-            "dx-case": {"type": "ARRAY", "items": article_schema},
-            "business": {"type": "ARRAY", "items": article_schema},
-            "consulting": {"type": "ARRAY", "items": article_schema}
+            "articles": {
+                "type": "ARRAY",
+                "items": article_schema
+            }
         },
-        "required": ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]
+        "required": ["articles"]
     }
-    
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=response_schema
-        )
-    )
-    return response.text
-
-def create_html_site(json_text):
-    """JSON要約データをもとに静的Webページ (index.html) を出力する"""
-    json_text = json_text.strip()
-    triple_backtick = "`" * 3
-    if json_text.startswith(triple_backtick):
-        json_text = re.sub(r'^`{3}(?:json)?\n', '', json_text)
-        json_text = re.sub(r'\n`{3}$', '', json_text)
-    json_text = json_text.strip()
 
     try:
-        data = json.loads(json_text)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema
+            )
+        )
+        res_json = json.loads(response.text)
+        return res_json.get("articles", [])
     except Exception as e:
-        print(f"Error: JSONのパースに失敗しました。 {e}")
-        data = {}
+        print(f"Gemini generation error for {genre_name}: {e}")
+        return []
+
+def generate_all_summaries():
+    """全カテゴリーを順次処理して結合"""
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY が設定されていません。")
         
-    normalized_data = {}
-    for standard_key in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]:
-        possible_keys = [standard_key, standard_key.replace("-", "_"), standard_key.replace("_", "-")]
-        articles = []
-        for pk in possible_keys:
-            if pk in data and isinstance(data[pk], list) and len(data[pk]) > 0:
-                articles = data[pk]
-                break
-        normalized_data[standard_key] = articles
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    final_data = {}
+
+    for config in GENRE_CONFIG:
+        key = config["key"]
+        name = config["name"]
+        urls = config["urls"]
         
+        print(f"[{name}] の記事を取得中...")
+        raw_articles = fetch_articles_for_genre(urls)
+        print(f"  └ 取得件数: {len(raw_articles)}件 -> Geminiで要約生成中...")
+        
+        summarized = summarize_single_genre(client, name, raw_articles)
+        final_data[key] = summarized
+        print(f"  └ 要約完了: {len(summarized)}件出力")
+
+    return final_data
+
+def create_html_site(data):
+    """取得・要約したデータをHTML形式で出力"""
     today_str = datetime.now(JST).strftime("%Y年%m月%d日")
-    
     genre_html_dict = {}
-    for genre_key in ["ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"]:
-        articles = normalized_data.get(genre_key, [])
+
+    for config in GENRE_CONFIG:
+        genre_key = config["key"]
+        articles = data.get(genre_key, [])
         cards_html = ""
         
         if not articles:
             cards_html = '<p style="color:var(--text-muted); text-align:center; padding:20px;">（過去1週間の新規投稿はありません）</p>'
         else:
+            cards_html += f'<div style="margin-bottom:12px; font-size:0.85rem; color:var(--text-muted); text-align:right;">表示件数: {len(articles)}件（過去7日間）</div>'
             for art in articles:
-                title_clean = str(art.get('title', '無題')).replace('"', '&quot;')
+                title_clean = str(art.get('title', '無題')).replace('"', '&quot;').replace('<', '&lt;')
                 url_clean = str(art.get('url', '#'))
                 art_date = str(art.get('date', '最近の投稿'))
                 
@@ -287,7 +292,7 @@ def create_html_site(json_text):
                             <ul class="summary-list">
                                 {li_elements}
                             </ul>
-                            <a href="{url_clean}" target="_blank" class="btn-source">ソース元で記事を読む ↗</a>
+                            <a href="{url_clean}" target="_blank" rel="noopener noreferrer" class="btn-source">ソース元で記事を読む ↗</a>
                         </div>
                     </div>
                 </div>
@@ -380,21 +385,22 @@ def create_html_site(json_text):
 </html>"""
 
     final_html = template_html.replace("{{DATE}}", today_str)
-    final_html = final_html.replace("{{AI_DOMESTIC}}", genre_html_dict["ai-domestic"])
-    final_html = final_html.replace("{{AI_OVERSEAS}}", genre_html_dict["ai-overseas"])
-    final_html = final_html.replace("{{AI_TIPS}}", genre_html_dict["ai-tips"])
-    final_html = final_html.replace("{{DX_CASE}}", genre_html_dict["dx-case"])
-    final_html = final_html.replace("{{BUSINESS}}", genre_html_dict["business"])
-    final_html = final_html.replace("{{CONSULTING}}", genre_html_dict["consulting"])
+    final_html = final_html.replace("{{AI_DOMESTIC}}", genre_html_dict.get("ai-domestic", ""))
+    final_html = final_html.replace("{{AI_OVERSEAS}}", genre_html_dict.get("ai-overseas", ""))
+    final_html = final_html.replace("{{AI_TIPS}}", genre_html_dict.get("ai-tips", ""))
+    final_html = final_html.replace("{{DX_CASE}}", genre_html_dict.get("dx-case", ""))
+    final_html = final_html.replace("{{BUSINESS}}", genre_html_dict.get("business", ""))
+    final_html = final_html.replace("{{CONSULTING}}", genre_html_dict.get("consulting", ""))
 
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(final_html)
     print("index.html の生成に成功しました。")
 
 def send_to_line():
-    """GitHub PagesのURLを構築してLINEにPush通知を送る"""
+    """LINE Messaging APIへ通知を送信"""
     if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_USER_ID:
-        raise ValueError("LINEの認証情報が設定されていません。")
+        print("LINE認証情報がないため送信をスキップします。")
+        return
 
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
@@ -403,7 +409,6 @@ def send_to_line():
     }
     
     repository_full = os.getenv("GITHUB_REPOSITORY")
-    
     if repository_full:
         parts = repository_full.split("/")
         github_user = parts[0].lower()
@@ -447,14 +452,11 @@ def send_to_line():
         print(f"LINEへの通知リンク送信が完了しました。送信URL: {site_url}")
 
 if __name__ == "__main__":
-    print("6つのジャンル別にRSSソースから重複を排除して取得中...")
-    processed_data = fetch_all_genres()
+    print("=== カテゴリー別要約処理を開始 ===")
+    summarized_data = generate_all_summaries()
     
-    print("GeminiでJSON形式の要約データを生成中...")
-    summary_json = generate_summary(processed_data)
+    print("\n=== 静的HTML (index.html) の構築 ===")
+    create_html_site(summarized_data)
     
-    print("静的HTMLサイト(index.html)を構築中...")
-    create_html_site(summary_json)
-    
-    print("スマホのLINEへ通知リンクを送信中...")
+    print("\n=== LINEへのプッシュ通知 ===")
     send_to_line()
