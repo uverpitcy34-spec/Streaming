@@ -21,7 +21,7 @@ LINE_USER_ID = os.getenv("LINE_USER_ID")
 # 日本時間(JST)のタイムゾーンを定義
 JST = timezone(timedelta(hours=9))
 
-# ── 【6大ジャンル設計図と内部キーの対応】 ──
+# ── 【6大ジャンル設計図と内部キーの対応（フィードを追加・拡充）】 ──
 GENRE_CONFIG = [
     {
         "key": "ai-domestic",
@@ -29,7 +29,9 @@ GENRE_CONFIG = [
         "urls": [
             "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",
             "https://www.publickey1.jp/atom.xml",
-            "https://ascii.jp/rss/rss_ai.xml"
+            "https://ascii.jp/rss/rss_ai.xml",
+            "https://b.hatena.ne.jp/entrylist/it/ai.rss",  # 追加: はてなブックマークAI
+            "https://ledge.ai/feed"                          # 追加: Ledge.ai
         ]
     },
     {
@@ -38,7 +40,8 @@ GENRE_CONFIG = [
         "urls": [
             "https://techcrunch.com/category/artificial-intelligence/feed/",
             "https://venturebeat.com/category/ai/feed/",
-            "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
+            "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+            "https://mittechnologypreview.jp/tag/ai/feed/"  # 追加: MIT Tech Review
         ]
     },
     {
@@ -53,7 +56,8 @@ GENRE_CONFIG = [
             "https://zenn.dev/topics/llm/feed",
             "https://zenn.dev/topics/ai/feed",
             "https://zenn.dev/topics/python/feed",
-            "https://zenn.dev/topics/datascience/feed"
+            "https://zenn.dev/topics/datascience/feed",
+            "https://b.hatena.ne.jp/entrylist/it/python.rss"  # 追加: はてブPython
         ]
     },
     {
@@ -63,7 +67,8 @@ GENRE_CONFIG = [
             "https://enterprisezine.jp/rss/new/",
             "https://japan.zdnet.com/rss/",
             "https://xtech.nikkei.com/rss/index.rdf",
-            "https://rss.itmedia.co.jp/rss/2.0/business.xml"
+            "https://rss.itmedia.co.jp/rss/2.0/business.xml",
+            "https://b.hatena.ne.jp/entrylist/it/dx.rss"      # 追加: はてブDX
         ]
     },
     {
@@ -73,7 +78,8 @@ GENRE_CONFIG = [
             "https://business.nikkei.com/rss/bn/nb.rdf",
             "https://toyokeizai.net/list/feed/rss",
             "https://diamond.jp/rss/articles",
-            "https://www.dhbr.net/rss"
+            "https://www.dhbr.net/rss",
+            "https://b.hatena.ne.jp/entrylist/economics.rss"  # 追加: はてブ経済
         ]
     },
     {
@@ -118,7 +124,7 @@ def fetch_articles_for_genre(urls):
     for url in urls:
         try:
             feed = feedparser.parse(url)
-            for entry in feed.entries[:50]:  # 十分な件数を取得
+            for entry in feed.entries:  # 全エントリを取得
                 link = clean_url(entry.link)
                 if not link or link in seen_links:
                     continue
@@ -139,6 +145,7 @@ def fetch_articles_for_genre(urls):
                         dt_utc = dt_naive.replace(tzinfo=timezone.utc)
                         dt_jst = dt_utc.astimezone(JST)
                         
+                        # 過去7日以内の記事のみを通過させる
                         if dt_jst < time_threshold:
                             continue
                         date_str = dt_jst.strftime("%m/%d %H:%M")
@@ -166,7 +173,7 @@ def fetch_articles_for_genre(urls):
     return genre_articles
 
 def summarize_single_genre(client, genre_name, articles):
-    """1つのカテゴリーごとにGemini APIで要約・翻訳を生成（トークン制限回避のため個別処理）"""
+    """1つのカテゴリーごとにGemini APIで要約・翻訳を生成"""
     if not articles:
         return []
 
@@ -177,17 +184,17 @@ def summarize_single_genre(client, genre_name, articles):
 
     prompt = f"""
     あなたはビジネスニュースの分析プロフェッショナルです。
-    提供された【{genre_name}】の記事リストから、**1日あたり最大10件（過去7日間で合計最大70件）**を抽出・翻訳・要約してください。
+    提供された【{genre_name}】の記事リストから、**全件（最大70件まで）**を要約・翻訳して出力してください。
 
     【絶対厳守ルール】
-    1. 提供データに存在しないURLやタイトルは絶対に捏造しないでください。
-    2. URLと投稿日（date）はデータにあるものをそのまま使用してください。
-    3. 英語のタイトル・概要は、必ず【自然で高品質なビジネス日本語に翻訳】してください。
-    4. 各記事の要約（summary）は、箇条書き2行（文字列の配列）で簡潔かつ論理的に記述してください。
-    5. 投稿日が新しい順（降順）に並べて出力してください。
-    6. **目標件数**: 1日約10件、過去1週間で**最大70件**まで抽出してください（データ数が足りない場合は存在する全件を出力）。
+    1. **データを間引かないでください**。提供された記事データから条件に合うものは可能な限りすべて出力してください（最大70件）。
+    2. 提供データに存在しないURLやタイトルは絶対に捏造しないでください。
+    3. URLと投稿日（date）はデータにあるものをそのまま使用してください。
+    4. 英語のタイトル・概要は、必ず【自然で高品質なビジネス日本語に翻訳】してください。
+    5. 各記事の要約（summary）は、箇条書き2行（文字列の配列）で簡潔に記述してください。
+    6. 投稿日が新しい順（降順）に並べて出力してください。
 
-    【対象データ】
+    【対象データ（計 {len(articles)} 件）】
     {articles_text}
     """
 
@@ -246,11 +253,13 @@ def generate_all_summaries():
         
         print(f"[{name}] の記事を取得中...")
         raw_articles = fetch_articles_for_genre(urls)
-        print(f"  └ 取得件数: {len(raw_articles)}件 -> Geminiで要約生成中...")
+        print(f"  └ 過去7日間の該当記事: {len(raw_articles)}件 -> Geminiで処理中...")
         
-        summarized = summarize_single_genre(client, name, raw_articles)
+        # 最大70件にスライスしてGeminiに渡す
+        target_articles = raw_articles[:70]
+        summarized = summarize_single_genre(client, name, target_articles)
         final_data[key] = summarized
-        print(f"  └ 要約完了: {len(summarized)}件出力")
+        print(f"  └ 出力完了: {len(summarized)}件")
 
     return final_data
 
