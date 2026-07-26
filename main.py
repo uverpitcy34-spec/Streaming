@@ -15,7 +15,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_USER_ID = os.getenv("LINE_USER_ID")
 
-# 💡 明示的に日本時間(JST)のタイムゾーンを定義してサーバーの国籍に依存させない
+# 明示的に日本時間(JST)のタイムゾーンを定義
 JST = timezone(timedelta(hours=9))
 
 # ── 【最新版・6大ジャンル設計図】 ──
@@ -30,13 +30,16 @@ GENRE_CHANNELS = {
         "https://venturebeat.com/category/ai/feed/",
         "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
     ],
-    "3. AI実務Tips・Pythonコーディング": [
+    "3. AI実務Tips・Python・データサイエンス": [
         "https://qiita.com/tags/ai/feed",
         "https://qiita.com/tags/langchain/feed",
         "https://qiita.com/tags/python/feed",
+        "https://qiita.com/tags/datascience/feed",       # 追加: データサイエンス
+        "https://qiita.com/tags/machine-learning/feed", # 追加: 機械学習
         "https://zenn.dev/topics/llm/feed",
         "https://zenn.dev/topics/ai/feed",
-        "https://zenn.dev/topics/python/feed"
+        "https://zenn.dev/topics/python/feed",
+        "https://zenn.dev/topics/datascience/feed"     # 追加: データサイエンス
     ],
     "4. 企業DX・IT導入事例": [
         "https://enterprisezine.jp/rss/new/",
@@ -51,13 +54,16 @@ GENRE_CHANNELS = {
         "https://www.dhbr.net/rss"                             # Harvard Business Review日本版
     ],
     "6. コンサルティング業界動向": [
-        "https://www.consulnews.jp/feed/"                      # コンサル業界ニュース（専門誌）
+        "https://www.consulnews.jp/feed/",                     # コンサル業界ニュース（専門誌）
+        "https://ascii.jp/rss/rss_business.xml",               # ASCII ビジネス・ITコンサル系
+        "https://rss.itmedia.co.jp/rss/2.0/enterprise.xml"     # ITmedia エンタープライズ・コンサル
     ]
 }
 
-# 💡 経営・ビジネス情報に混ざるプライベート系ノイズ記事を完全にシャットアウトするキーワード群
+# 経営・ビジネス情報等に混ざるプライベート系ノイズ記事を排除するキーワード群
 EXCLUDE_KEYWORDS = [
     "| ライフ |", 
+    "| キャリア |", 
     "| エンタメ |", 
     "| カルチャー |", 
     "| スポーツ |", 
@@ -65,7 +71,8 @@ EXCLUDE_KEYWORDS = [
     "| グルメ |", 
     "| ファッション |", 
     "| コミック |",
-    "芸能", "亀梨和也", "田中みな実", "結婚", "妊娠", "熱愛"
+    "| 恋愛・結婚 |",
+    "芸能", "亀梨和也", "田中みな実", "結婚", "妊娠", "熱愛", "占い", "レシピ", "美容"
 ]
 
 def clean_url(url_string):
@@ -75,7 +82,6 @@ def clean_url(url_string):
     try:
         parsed = urlparse(url_string.strip())
         kv_pairs = parse_qsl(parsed.query)
-        # 不要なマーケティング用パラメータ(utm_*)を排除
         cleaned_kv = [(k, v) for k, v in kv_pairs if not k.startswith("utm_")]
         new_query = urlencode(cleaned_kv)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
@@ -86,18 +92,18 @@ def fetch_all_genres():
     structured_data = ""
     seen_links = set()
     
-    # 日本時間ベースで5日前の足切りラインを算出
+    # 💡 日本時間ベースで「過去1週間（7日間＝168時間）」の足切りラインを算出
     now_jst = datetime.now(JST)
-    time_threshold = now_jst - timedelta(hours=120)
+    time_threshold = now_jst - timedelta(days=7)
 
     for genre_name, urls in GENRE_CHANNELS.items():
         structured_data += f"\n\n【{genre_name}】\n"
-        genre_articles_count = 0
+        genre_articles = []
         
         for url in urls:
             try:
                 feed = feedparser.parse(url)
-                max_fetch = 15 if "5." in genre_name else 5
+                max_fetch = 15 if "5." in genre_name or "6." in genre_name else 8
                 
                 for entry in feed.entries[:max_fetch]:
                     link = clean_url(entry.link)
@@ -108,47 +114,56 @@ def fetch_all_genres():
                     summary = entry.get("summary", "")[:250].strip()
                     summary = re.sub(r'\s+', ' ', summary)
 
-                    # 💡 【ノイズフィルタ】タイトルまたは概要に除外キーワードが含まれる場合はGeminiに送らず完全スキップ
+                    # ノイズフィルタ
                     should_exclude = False
                     for kw in EXCLUDE_KEYWORDS:
                         if kw in title or kw in summary:
                             should_exclude = True
                             break
                     if should_exclude:
-                        print(f"Skipped unwanted article (filtered): {title}")
                         continue
                     
-                    # 記事の投稿日時を解析（表示用・およびフィルター用）
+                    # 記事の投稿日時を解析（JSTへ統一変換）
+                    dt_jst = None
                     date_str = ""
                     published_tok = entry.get("published_parsed") or entry.get("updated_parsed")
                     if published_tok:
                         try:
-                            # タイムゾーンを考慮しない形(Naive)で一旦復元し、UTCとみなしてJSTに変換
                             dt_naive = datetime(*published_tok[:6])
                             dt_utc = dt_naive.replace(tzinfo=timezone.utc)
                             dt_jst = dt_utc.astimezone(JST)
                             
+                            # 7日間より古い記事はスキップ
                             if dt_jst < time_threshold:
                                 continue
                             date_str = dt_jst.strftime("%m/%d %H:%M")
                         except Exception:
                             pass
                     
-                    # 日付が取れなかった場合のバックアップ表記
                     if not date_str:
                         date_str = "最近の投稿"
+                        dt_jst = now_jst - timedelta(days=3) # ソート用バックアップ日時
                     
                     seen_links.add(link)
-                    
-                    # Geminiへのインプット情報に「投稿日」も付与する
-                    structured_data += f"- タイトル: {title}\n  URL: {link}\n  投稿日: {date_str}\n  概要: {summary}\n"
-                    genre_articles_count += 1
+                    genre_articles.append({
+                        "title": title,
+                        "url": link,
+                        "date_str": date_str,
+                        "dt_jst": dt_jst,
+                        "summary": summary
+                    })
             except Exception as e:
                 print(f"Warning: Failed to parse {url}. Error: {e}")
                 continue
                 
-        if genre_articles_count == 0:
-            structured_data += "(このジャンルの直近3日間の新規投稿はありません)\n"
+        # 💡 【新しい順に並び替え】投稿日時（dt_jst）の降順でソート
+        genre_articles.sort(key=lambda x: x["dt_jst"], reverse=True)
+
+        if not genre_articles:
+            structured_data += "(このジャンルの過去1週間の新規投稿はありません)\n"
+        else:
+            for art in genre_articles:
+                structured_data += f"- タイトル: {art['title']}\n  URL: {art['url']}\n  投稿日: {art['date_str']}\n  概要: {art['summary']}\n"
             
     return structured_data
 
@@ -166,12 +181,13 @@ def generate_summary(structured_articles_text):
     【絶対厳守ルール】
     1. 提供されたデータに実在しないニュース、存在しないURLは絶対に創作しないでください（ハルシネーションの徹底排除）。
     2. 各記事のURL・投稿日は、データにあるものをそのまま完全に出力してください。
-    3. 海外ソース（英語のタイトルや本文）は、必ず高度なビジネス日本語に翻訳した上で要約を行ってください。
-    4. 💡 芸能、恋愛、結婚、健康、医療、美容、ペット、趣味、ライフハック、生活お悩み相談などの「プライベート・生活情報（特にタイトルに『ライフ』や『エンタメ』が含まれるもの）」は、ビジネスブリーフィングとしての質を保つために完全に除外・排除してください。
+    3. 🔥 海外ソース（英語のタイトルや本文）は、要約文だけでなく【タイトルも必ず自然で洗練されたビジネス日本語に翻訳】して出力してください。英語タイトルのまま出力することは厳禁です。
+    4. 芸能、恋愛、結婚、健康、医療、美容、趣味、生活お悩み相談などのプライベート情報は完全に除外してください。
+    5. 🔥 各ジャンル内の記事は、必ず「投稿日が新しい順（降順）」になるよう並び順を維持して出力してください。
 
     【🔥 配信本数ルール（厳守）】
     ・「ai-domestic」「ai-overseas」「ai-tips」「dx-case」「consulting」の各ジャンル：各5〜6本目安
-    ・「business」ジャンル：純粋な経済・経営・企業活動のニュースの中から、データがある限り妥協せず【20本目安】の大ボリュームで出力
+    ・「business」ジャンル：純粋な経済・経営・企業活動のニュースの中から、データがある限り妥妥せず【20本目安】の大ボリュームで出力
 
     【出力形式の指定】
     指定された6つのキー（"ai-domestic", "ai-overseas", "ai-tips", "dx-case", "business", "consulting"）を最上位に持つJSONオブジェクトとして出力してください。
@@ -182,13 +198,12 @@ def generate_summary(structured_articles_text):
     {structured_articles_text}
     """
     
-    # 古いライブラリバージョンでも完全にJSON構造をロックするスキーマ定義
     article_schema = {
         "type": "OBJECT",
         "properties": {
             "title": {"type": "STRING"},
             "url": {"type": "STRING"},
-            "date": {"type": "STRING"},  # 日付用キーを追加
+            "date": {"type": "STRING"},
             "summary": {
                 "type": "ARRAY",
                 "items": {"type": "STRING"}
@@ -243,7 +258,6 @@ def create_html_site(json_text):
                 break
         normalized_data[standard_key] = articles
         
-    # 💡 表示用のメインヘッダー日付を「2026年07月01日」のように正しく表示
     today_str = datetime.now(JST).strftime("%Y年%m月%d日")
     
     genre_html_dict = {}
@@ -252,7 +266,7 @@ def create_html_site(json_text):
         cards_html = ""
         
         if not articles:
-            cards_html = '<p style="color:var(--text-muted); text-align:center; padding:20px;">（本日の新規投稿はありません）</p>'
+            cards_html = '<p style="color:var(--text-muted); text-align:center; padding:20px;">（過去1週間の新規投稿はありません）</p>'
         else:
             for art in articles:
                 title_clean = str(art.get('title', '無題')).replace('"', '&quot;')
@@ -264,7 +278,6 @@ def create_html_site(json_text):
                     summary_items = [summary_items]
                 li_elements = "".join([f"<li>{str(item).replace('<', '&lt;')}</li>" for item in summary_items])
                 
-                # タイトルの下に小さく薄いグレーで投稿日（🕒 07/01 08:30）を表示
                 cards_html += f"""
                 <div class="news-card">
                     <div class="card-summary-trigger" onclick="toggleCard(this)">
@@ -407,7 +420,6 @@ def send_to_line():
     else:
         site_url = "https://github.com"
     
-    # LINEに表示する配信日付も完全に日本時間(JST)ベース
     today_str = datetime.now(JST).strftime("%m/%d")
 
     payload = {
@@ -450,4 +462,3 @@ if __name__ == "__main__":
     
     print("スマホのLINEへ通知リンクを送信中...")
     send_to_line()
-
