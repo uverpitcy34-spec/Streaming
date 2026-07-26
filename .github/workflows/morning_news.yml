@@ -2,14 +2,13 @@ name: Morning News Bot
 
 on:
   schedule:
-    # 💡 混雑（大渋滞）を100%回避するため、あえて「18分」という超中途半端な端数に設定します！
-    # 毎日 協定世界時(UTC) 20:18 に実行 ＝ 日本時間(JST)で【毎朝 AM 5:18】
-    # これにより割り当て待ちキューをスッと通過でき、毎朝確実に朝6時前後に配信が完了します。
-    - cron: '18 20 * * *'
+    # 💡 混雑（実行待ち）を回避するため端数分（12分）に設定
+    # 毎日 協定世界時(UTC) 20:12 に実行 ＝ 日本時間(JST)で【毎朝 AM 5:12】
+    - cron: '12 20 * * *'
   # GitHubの画面からいつでも手動で実行（テスト）できるようにする設定
   workflow_dispatch:
 
-# GitHub Pagesの自動デプロイに必要なアクセス権限を明示
+# GitHub Pagesの自動デプロイに必要なアクセス権限
 permissions:
   contents: write
   pages: write
@@ -19,7 +18,7 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -31,7 +30,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install google-generativeai requests feedparser python-dotenv
+        pip install google-genai requests feedparser python-dotenv
 
     - name: Run script
       env:
@@ -41,7 +40,7 @@ jobs:
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: python main.py
 
-    # 生成された index.html を自動的に GitHub Pages 向けにパッケージ・公開する
+    # 生成された index.html を自動的に GitHub Pages 向けにデプロイ
     - name: Upload artifact for Pages
       uses: actions/upload-pages-artifact@v3
       with:
